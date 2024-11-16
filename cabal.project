@@ -1,0 +1,12 @@
+packages: .
+with-compiler: ghc-9.8.2
+
+source-repository-package
+  type: git
+  location: https://github.com/andrewthad/vext
+  tag: 7b6ff970cd39ebd021137ff7a5f35c7cd91ee823
+
+source-repository-package
+  type: git
+  location: https://github.com/byteverse/natural-arithmetic
+  tag: b449db22194af4826d02780f77f2271b18505926

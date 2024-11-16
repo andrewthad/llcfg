@@ -1,0 +1,58 @@
+cabal-version: 3.4
+name: llcfg
+version: 0.1.0.0
+license: BSD-3-Clause
+license-file: LICENSE
+author: Andrew Martin
+maintainer: andrew.thaddeus@gmail.com
+category: Data
+build-type: Simple
+extra-doc-files: CHANGELOG.md
+
+library
+  ghc-options: -Wall
+  exposed-modules: Concrete
+  build-depends:
+    , base >=4.19
+    , text >=2.0.2
+    , transformers >=0.6.1
+    , vext
+    , natural-arithmetic >=0.2.1
+    , containers >=0.6.5
+    , primitive >=0.9
+    , unlifted >=0.2.2
+    , split >=0.2.5
+  hs-source-dirs: src
+  default-language: GHC2021
+
+-- library
+--   ghc-options: -Wall
+--   signatures: Grammar
+--   exposed-modules: Parser
+--   -- other-modules:
+--   -- other-extensions:
+--   build-depends:
+--     , base >=4.18
+--     , text >=2.0.2
+--     , transformers >=0.6.1
+--     , vex
+--     , natural-arithmetic >=0.2.1
+--     , topaz >=0.8.0.1
+--     , containers >=0.6.5
+--   hs-source-dirs: src
+--   default-language: GHC2021
+
+test-suite test
+  type: exitcode-stdio-1.0
+  hs-source-dirs: test
+  main-is: Main.hs
+  build-depends:
+    , base                 >=4.17.0.0 && <5
+    , primitive
+    , tasty                >=1.2.3
+    , tasty-hunit          >=0.10.0.2
+    , llcfg
+    , natural-arithmetic >=0.2.1
+    , vext
+    , unlifted >=0.2.2
+  default-language: GHC2021
