@@ -16,6 +16,7 @@ import Data.Char (ord)
 import Arithmetic.Types (Fin#, Nat#, EitherFin#, pattern EitherFinRight#, pattern EitherFinLeft#)
 import Concrete (Cfg(Cfg), Production(..),buildNullableTable, buildFirstSetTable, buildParseTable, recognize)
 import Concrete (ParseTable, ParseTree(ParseTreeLeaf,ParseTreeBranch),PlainAnnotation(PlainAnnotation), decodeCfg, parse)
+import Concrete (removeUselessProductions)
 import Control.Monad (when)
 import Data.Unlifted (Bool#, pattern True#, pattern False#)
 import Test.Tasty (defaultMain,testGroup,TestTree)
@@ -62,7 +63,7 @@ tests = testGroup "Tests"
               !tb = Fin.constant# N1# :: Fin# 3
               !tc = Fin.constant# N2# :: Fin# 3
            in True @=? recognize (Fin.constant# N0#) table (Int.construct4_ tb tb ta tc)
-    , THU.testCase "B" $ case buildParseTable cfgB of
+    , THU.testCase "B" $ let cfgB' = removeUselessProductions cfgB in case buildParseTable (removeUselessProductions cfgB') of
         Left _ -> fail "Could not build parse table"
         Right table -> 
           let !ta = Fin.constant# N0# :: Fin# 5
@@ -188,6 +189,8 @@ firstSetTableEquals n t table0 table1 =
   Lifted.foldrZip (\x y acc -> Bit.equals t x y && acc) True n table1 table0
 
 -- This grammar is from https://www.cs.scranton.edu/~mccloske/courses/cmps260/cfg_remove_useless.html
+-- This is used to test that fruitfulness analysis and useless rule pruning
+-- are working.
 --
 -- S -> aSa | bB | bAA    (1) (2) (3)
 -- A -> abb | SbA | aB 	  (4) (5) (6)

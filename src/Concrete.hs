@@ -13,8 +13,8 @@
 -- * Consider using UnliftedDatatypes for most types defined in this module.
 -- * Build follow table
 -- * Add fruitfulness analysis
--- * Add reachability analysis
--- * Add types that hide the numeric parts of this.
+-- * [Done] Add reachability analysis
+-- * [Done] Add types that hide the numeric parts of this.
 -- * [Done] Implement a grammar parser to make it easier to write tests.
 -- * [Done] Implement a parser that turn the tokens into a tree-like structure.
 --   This requires that the productions have some sense of identity.
@@ -37,9 +37,11 @@
 --   to do this. Not sure how important this actually is.
 module Concrete
   ( Cfg(..)
+  , Cfg_(..)
   , ParseTable(..)
   , ParseTree(..)
   , Production(..)
+  , removeUselessProductions
   , buildNullableTable
   , buildFirstSetTable
   , buildParseTable
@@ -55,7 +57,7 @@ import Control.Monad.ST (ST,runST)
 import Data.List.Split (splitOn)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (ExceptT)
-import Data.Foldable (traverse_)
+import Data.Foldable (traverse_,for_)
 import Data.Kind (Type)
 import Data.Primitive (SmallArray)
 import Data.Functor.Const (Const(Const))
@@ -353,6 +355,69 @@ buildNullableTable cfg@Cfg{nonterminalCount=n} = go (1000 :: Word) (Bit.replicat
      in if Bit.equals n table1 table0
           then table1
           else go (counter - 1) table1
+
+-- | This removes unused productions, but it does not remove nonterminals
+-- that lack productions.
+removeUselessProductions :: Cfg p t n -> Cfg p t n
+removeUselessProductions cfg0 =
+  let fruitful = buildFruitfulnessTable cfg0
+      cfg1 = selectNonterminals fruitful cfg0
+      reachable = buildReachabilityTable cfg1
+      cfg2 = selectNonterminals reachable cfg1
+   in cfg2
+
+-- Keep all the nonterminals that are set to True in the bit vector
+-- Discard the others by setting their productions to the empty string
+selectNonterminals ::
+     Bit.Vector n Bool#
+  -> Cfg p t n
+  -> Cfg p t n
+selectNonterminals reachable cfg@Cfg{nonterminalCount=n,terminalCount=t,grammar} =
+  case Bit.allEqTrue n reachable of
+    True -> cfg
+    False -> Cfg
+      { nonterminalCount = n
+      , terminalCount = t
+      , grammar = runST $ do
+          dst <- Lifted.thaw n grammar
+          Fin.ascendM_# n $ \terminal -> do
+            case Bit.index reachable terminal of
+              True# -> pure ()
+              _ -> Lifted.write dst terminal mempty
+          Lifted.unsafeFreeze dst
+      }
+
+buildFruitfulnessTable ::
+     Cfg p t n
+  -> Bit.Vector n Bool#
+buildFruitfulnessTable Cfg{nonterminalCount=n,grammar=Lifted.Vector grammar} = runST $ do
+  dst <- Bit.initialized n True#
+  Fin.ascendM_# n $ \i -> do
+    let productions = Lifted.index# grammar i
+    if all (productionReferencesNonterminal i) productions
+      then Bit.write dst i False#
+      else pure ()
+  Bit.unsafeFreeze dst
+
+productionReferencesNonterminal :: Fin# n -> Production p t n -> Bool
+productionReferencesNonterminal nt (Production s _ symbols) = Int.any
+  (\symbol -> case symbol of
+    EitherFinRight# nonterminal -> Fin.equals# nt nonterminal
+    _ -> False
+  ) s (Int.Vector symbols)
+
+buildReachabilityTable ::
+     Cfg p t n
+  -> Bit.Vector n Bool#
+buildReachabilityTable Cfg{nonterminalCount=n,grammar=Lifted.Vector grammar} = runST $ do
+  dst <- Bit.initialized n False#
+  Fin.ascendM_# n $ \i -> do
+    let productions = Lifted.index# grammar i
+    for_ productions $ \(Production s _ symbols) -> do
+      Fin.ascendM_# s $ \j -> case Int.index# symbols j of
+        EitherFinRight# nonterminal -> Bit.write dst nonterminal True#
+        _ -> pure ()
+  Bit.unsafeFreeze dst
 
 buildFirstSetTable ::
      Bit.Vector n Bool# -- the nullable table
