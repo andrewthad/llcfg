@@ -4,7 +4,7 @@ with-compiler: ghc-9.8.2
 source-repository-package
   type: git
   location: https://github.com/andrewthad/vext
-  tag: cb4a93caac4f06d2d6ac20a6da05f26e037e872c
+  tag: 678ea9d0872af17a534bdeec9a3aa4f57f3b384c
 
 source-repository-package
   type: git

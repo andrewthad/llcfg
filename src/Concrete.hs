@@ -1,9 +1,10 @@
-{-# language DuplicateRecordFields #-}
-{-# language QuantifiedConstraints #-}
-{-# language MultiWayIf #-}
 {-# language DataKinds #-}
+{-# language DuplicateRecordFields #-}
+{-# language LambdaCase #-}
 {-# language MagicHash #-}
+{-# language MultiWayIf #-}
 {-# language PatternSynonyms #-}
+{-# language QuantifiedConstraints #-}
 {-# language UnboxedTuples #-}
 
 -- Notes to Self:
@@ -12,7 +13,7 @@
 --   This will make it so that we do not have to thread these around everywhere.
 -- * Consider using UnliftedDatatypes for most types defined in this module.
 -- * Build follow table
--- * Add fruitfulness analysis
+-- * [Done] Add fruitfulness analysis
 -- * [Done] Add reachability analysis
 -- * [Done] Add types that hide the numeric parts of this.
 -- * [Done] Implement a grammar parser to make it easier to write tests.
@@ -50,15 +51,17 @@ module Concrete
     -- Helpers for testing
   , PlainAnnotation(..)
   , decodeCfg
+  , showCfg
   ) where
 
-import Control.Monad (when)
+import Control.Monad (when,replicateM_)
 import Control.Monad.ST (ST,runST)
 import Data.List.Split (splitOn)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except (ExceptT)
 import Data.Foldable (traverse_,for_)
 import Data.Kind (Type)
+import Data.Char (chr)
 import Data.Primitive (SmallArray)
 import Data.Functor.Const (Const(Const))
 import Data.Char (ord)
@@ -78,6 +81,7 @@ import qualified Vector.Int as Int
 import qualified Arithmetic.Types as Arithmetic
 import qualified Arithmetic.Nat as Nat
 import qualified Arithmetic.Fin as Fin
+import qualified Data.Primitive.Contiguous as Contiguous
 import qualified GHC.TypeNats as GHC
 
 -- | Representation: The unlifted array has T+1 elements, where
@@ -102,6 +106,27 @@ data Cfg (p :: GHC.Nat -> Type) t n = Cfg
   , nonterminalCount :: Nat# n
   , grammar :: !(Lifted.Vector n (SmallArray (Production p t n)))
   }
+
+showCfg :: Cfg p t n -> String
+showCfg Cfg{terminalCount,nonterminalCount,grammar} =
+  "terminals: " ++ show (Exts.I# (Nat.demote# terminalCount)) ++ "\n" ++
+  "nonterminals: " ++ show (Exts.I# (Nat.demote# nonterminalCount)) ++ "\n" ++
+  Lifted.ifoldr
+    (\nonterminal productions acc -> foldMap
+      (\(Production s _ syms) -> showNonterminalAsAlpha nonterminal ++ " -> " ++ Int.foldr (\sym acc' -> showSymbolAsAlpha sym ++ acc') "\n" s (Int.Vector syms)
+      ) productions ++ acc
+    ) "" nonterminalCount grammar
+
+showNonterminalAsAlpha :: Fin# n -> String
+showNonterminalAsAlpha nt = [chr (ord 'A' + Exts.I# (Fin.demote# nt))]
+
+showTerminalAsAlpha :: Fin# n -> String
+showTerminalAsAlpha nt = [chr (ord 'a' + Exts.I# (Fin.demote# nt))]
+
+showSymbolAsAlpha :: EitherFin# t n -> String
+showSymbolAsAlpha = \case
+  EitherFinLeft# terminal -> showTerminalAsAlpha terminal
+  EitherFinRight# nonterminal -> showNonterminalAsAlpha nonterminal
 
 data Cfg_ (p :: GHC.Nat -> Type) = forall (t :: GHC.Nat) (n :: GHC.Nat). Cfg_
   { terminalCount :: Nat# t
@@ -359,21 +384,43 @@ buildNullableTable cfg@Cfg{nonterminalCount=n} = go (1000 :: Word) (Bit.replicat
 -- | This removes unused productions, but it does not remove nonterminals
 -- that lack productions.
 removeUselessProductions :: Cfg p t n -> Cfg p t n
-removeUselessProductions cfg0 =
+removeUselessProductions cfg0@Cfg{nonterminalCount=n} =
   let fruitful = buildFruitfulnessTable cfg0
       cfg1 = selectNonterminals fruitful cfg0
       reachable = buildReachabilityTable cfg1
       cfg2 = selectNonterminals reachable cfg1
-   in cfg2
+      fruitfulAndReachable = Bit.zipAnd n fruitful reachable
+      cfg3 = selectProductions fruitfulAndReachable cfg2
+   in cfg3
+
+-- Preserve productions that consist of only the nonterminals in
+-- the selection vector (and of any terminals). In the context in
+-- which this is called, we have already figured out which
+-- nonterminals have no productions, and we want to now remove
+-- the set of productions that include any of these nonterminals.
+selectProductions ::
+     Bit.Vector n Bool#
+  -> Cfg p t n
+  -> Cfg p t n
+selectProductions selection cfg@Cfg{nonterminalCount=n,terminalCount=t,grammar} =
+  case Bit.allEqTrue n selection of
+    True -> cfg
+    False -> Cfg
+      { nonterminalCount = n
+      , terminalCount = t
+      , grammar = Lifted.map
+          (Contiguous.filter (productionNonterminalsAllMembers selection))
+          grammar n
+      }
 
 -- Keep all the nonterminals that are set to True in the bit vector
--- Discard the others by setting their productions to the empty string
+-- Discard the others by setting their productions to the empty array
 selectNonterminals ::
      Bit.Vector n Bool#
   -> Cfg p t n
   -> Cfg p t n
-selectNonterminals reachable cfg@Cfg{nonterminalCount=n,terminalCount=t,grammar} =
-  case Bit.allEqTrue n reachable of
+selectNonterminals selection cfg@Cfg{nonterminalCount=n,terminalCount=t,grammar} =
+  case Bit.allEqTrue n selection of
     True -> cfg
     False -> Cfg
       { nonterminalCount = n
@@ -381,7 +428,7 @@ selectNonterminals reachable cfg@Cfg{nonterminalCount=n,terminalCount=t,grammar}
       , grammar = runST $ do
           dst <- Lifted.thaw n grammar
           Fin.ascendM_# n $ \terminal -> do
-            case Bit.index reachable terminal of
+            case Bit.index selection terminal of
               True# -> pure ()
               _ -> Lifted.write dst terminal mempty
           Lifted.unsafeFreeze dst
@@ -399,6 +446,17 @@ buildFruitfulnessTable Cfg{nonterminalCount=n,grammar=Lifted.Vector grammar} = r
       else pure ()
   Bit.unsafeFreeze dst
 
+-- All nonterminals in the production are members of the bit set
+-- of nonterminals.
+productionNonterminalsAllMembers :: Bit.Vector n Bool# -> Production p t n -> Bool
+productionNonterminalsAllMembers !set (Production s _ symbols) = Int.all
+  (\symbol -> case symbol of
+    EitherFinRight# nonterminal -> case Bit.index set nonterminal of
+      True# -> True
+      _ -> False
+    _ -> True
+  ) s (Int.Vector symbols)
+
 productionReferencesNonterminal :: Fin# n -> Production p t n -> Bool
 productionReferencesNonterminal nt (Production s _ symbols) = Int.any
   (\symbol -> case symbol of
@@ -406,17 +464,34 @@ productionReferencesNonterminal nt (Production s _ symbols) = Int.any
     _ -> False
   ) s (Int.Vector symbols)
 
+-- This assumes that nonterminal zero is the start symbol.
+-- It's not hard to general this to accept a bit vector of
+-- start symbols.
 buildReachabilityTable ::
      Cfg p t n
   -> Bit.Vector n Bool#
 buildReachabilityTable Cfg{nonterminalCount=n,grammar=Lifted.Vector grammar} = runST $ do
   dst <- Bit.initialized n False#
-  Fin.ascendM_# n $ \i -> do
-    let productions = Lifted.index# grammar i
-    for_ productions $ \(Production s _ symbols) -> do
-      Fin.ascendM_# s $ \j -> case Int.index# symbols j of
-        EitherFinRight# nonterminal -> Bit.write dst nonterminal True#
-        _ -> pure ()
+  case N0# <?# n of
+    JustVoid# zltn -> do
+      Bit.write dst (Fin.construct# zltn N0#) True#
+      -- This is a silly way to do this since it guarantees the worst-case
+      -- quadratic performance. But by repeating this n times, we guarantee
+      -- that we will have reached everything. Also, the proof of termination
+      -- is trivial. The better way to do this is to wait for the bit vector
+      -- to stop changing.
+      replicateM_ (Exts.I# (Nat.demote# n)) $ do
+        Fin.ascendM_# n $ \i -> do
+          isReachable <- Bit.read dst i
+          case isReachable of
+            False -> pure ()
+            True -> do
+              let productions = Lifted.index# grammar i
+              for_ productions $ \(Production s _ symbols) -> do
+                Fin.ascendM_# s $ \j -> case Int.index# symbols j of
+                  EitherFinRight# nonterminal -> Bit.write dst nonterminal True#
+                  _ -> pure ()
+    _ -> pure ()
   Bit.unsafeFreeze dst
 
 buildFirstSetTable ::

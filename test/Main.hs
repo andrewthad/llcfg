@@ -16,7 +16,7 @@ import Data.Char (ord)
 import Arithmetic.Types (Fin#, Nat#, EitherFin#, pattern EitherFinRight#, pattern EitherFinLeft#)
 import Concrete (Cfg(Cfg), Production(..),buildNullableTable, buildFirstSetTable, buildParseTable, recognize)
 import Concrete (ParseTable, ParseTree(ParseTreeLeaf,ParseTreeBranch),PlainAnnotation(PlainAnnotation), decodeCfg, parse)
-import Concrete (removeUselessProductions)
+import Concrete (removeUselessProductions,showCfg)
 import Control.Monad (when)
 import Data.Unlifted (Bool#, pattern True#, pattern False#)
 import Test.Tasty (defaultMain,testGroup,TestTree)
@@ -64,7 +64,9 @@ tests = testGroup "Tests"
               !tc = Fin.constant# N2# :: Fin# 3
            in True @=? recognize (Fin.constant# N0#) table (Int.construct4_ tb tb ta tc)
     , THU.testCase "B" $ let cfgB' = removeUselessProductions cfgB in case buildParseTable (removeUselessProductions cfgB') of
-        Left _ -> fail "Could not build parse table"
+        Left _ -> fail $
+          "Could not build parse table.\nUnsimplified CFG\n" ++ showCfg cfgB ++
+          "Simplified CFG:\n" ++ showCfg cfgB'
         Right table -> 
           let !ta = Fin.constant# N0# :: Fin# 5
               !tb = Fin.constant# N1# :: Fin# 5
@@ -194,9 +196,9 @@ firstSetTableEquals n t table0 table1 =
 --
 -- S -> aSa | bB | bAA    (1) (2) (3)
 -- A -> abb | SbA | aB 	  (4) (5) (6)
--- B -> AB | CaB          (7) (8)
--- C -> cC | Sa | bD 	  (9) (10) (11)
--- D -> dD | e 	          (12) (13)
+-- B -> AB | CaB          (7) (8) (note: not fruitful)
+-- C -> cC | Sa | bD 	  (9) (10) (11) (note: unreachable)
+-- D -> dD | e 	          (12) (13) (note: unreachable)
 --
 -- Examples of accepted strings:
 --
@@ -213,12 +215,12 @@ cfgB = Cfg N5# N5# $ Lifted.construct5
   !ntA = EitherFinRight# (Fin.constant# N1#) :: EitherFin# 5 5
   !ntB = EitherFinRight# (Fin.constant# N2#) :: EitherFin# 5 5
   !ntC = EitherFinRight# (Fin.constant# N3#) :: EitherFin# 5 5
-  !ntD = EitherFinRight# (Fin.constant# N3#) :: EitherFin# 5 5
+  !ntD = EitherFinRight# (Fin.constant# N4#) :: EitherFin# 5 5
   !ta = EitherFinLeft# (Fin.constant# N0#) :: EitherFin# 5 5
   !tb = EitherFinLeft# (Fin.constant# N1#) :: EitherFin# 5 5
   !tc = EitherFinLeft# (Fin.constant# N2#) :: EitherFin# 5 5
-  !td = EitherFinLeft# (Fin.constant# N2#) :: EitherFin# 5 5
-  !te = EitherFinLeft# (Fin.constant# N2#) :: EitherFin# 5 5
+  !td = EitherFinLeft# (Fin.constant# N3#) :: EitherFin# 5 5
+  !te = EitherFinLeft# (Fin.constant# N4#) :: EitherFin# 5 5
 
 mkp :: Int.Vector_ (EitherFin# t n) -> Production Proxy t n
 mkp (Int.Vector_ sz v) = Production sz Proxy v

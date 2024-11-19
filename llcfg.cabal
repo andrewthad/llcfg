@@ -19,6 +19,7 @@ library
     , vext
     , natural-arithmetic >=0.2.1
     , containers >=0.6.5
+    , contiguous >=0.6.4
     , primitive >=0.9
     , unlifted >=0.2.2
     , split >=0.2.5
